@@ -151,8 +151,7 @@ func download(session *session.Session, ring *bufRing, nameChan <-chan string, o
 			// TODO: Increment error counter.
 			continue
 		}
-		// buf = w.Bytes()
-		// FIXME: send buf + n to the scanner.
+		objectChan <- object{name: name, buf: w.Bytes()} // FIXME: Need to reslice down to n?
 	}
 }
 
