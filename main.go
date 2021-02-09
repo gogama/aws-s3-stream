@@ -113,7 +113,7 @@ func stream(namer objectNamer, p int) {
 
 	for i := 0; i < p; i++ {
 		go download(session, ring, nameChan, objectChan, doneChan)
-		go scan(ring, objectChan, doneChan)
+		go scan(ring, objectChan, linesChan, doneChan)
 		go dump(ring, linesChan, doneChan)
 	}
 	defer func() {
@@ -121,6 +121,7 @@ func stream(namer objectNamer, p int) {
 			nameChan <- ""
 			objectChan <- object{}
 		}
+		linesChan <- nil
 		for i := 0; i < 2*p+1; i++ {
 			<-doneChan
 		}
