@@ -259,7 +259,7 @@ func download(
 			ring.put(w.Bytes())
 			continue
 		}
-		objectChan <- object{name: name, buf: w.Bytes()[0:n]}
+		objectChan <- object{name: name, buf: w.Bytes()[:n]}
 	}
 }
 
@@ -277,6 +277,7 @@ func scanOne(obj object, ring *bufRing, linesChan chan<- []byte, errorChan chan<
 		r2, err := gzip.NewReader(r)
 		if err != nil {
 			errorChan <- err
+			ring.put(obj.buf)
 			return
 		}
 		defer func() { _ = r2.Close() }()
@@ -314,7 +315,11 @@ func dump(ring *bufRing, linesChan <-chan []byte, doneChan chan<- struct{}) {
 		if len(buf) == 0 || buf[len(buf)-1] != '\n' {
 			buf = append(buf, '\n')
 		}
-		_, _ = os.Stdout.Write(buf)
+		n, err := os.Stdout.Write(buf)
+		for err == io.ErrShortWrite {
+			buf2 := buf[n:]
+			n, err = os.Stdout.Write(buf2)
+		}
 		ring.put(buf)
 	}
 }
