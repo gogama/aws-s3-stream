@@ -315,9 +315,10 @@ func dump(ring *bufRing, linesChan <-chan []byte, doneChan chan<- struct{}) {
 		if len(buf) == 0 || buf[len(buf)-1] != '\n' {
 			buf = append(buf, '\n')
 		}
-		n, err := os.Stdout.Write(buf)
+		buf2 := buf
+		n, err := os.Stdout.Write(buf2)
 		for err == io.ErrShortWrite {
-			buf2 := buf[n:]
+			buf2 = buf[:n]
 			n, err = os.Stdout.Write(buf2)
 		}
 		ring.put(buf)
