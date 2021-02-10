@@ -21,11 +21,11 @@ import (
 )
 
 func main() {
-	pFlag := flag.Int("p", 4, "Number of parallel object reads")
-	bFlag := flag.String("b", "", "Default S3 bucket to read relative keys from")
+	cFlag := flag.Int("c", 4, "Number of concurrent object reads")
+	pFlag := flag.String("p", "", "Default S3 prefix to read relative keys from")
 	flag.Parse()
 	names := flag.Args()
-	parallel := min(1, max(16, max(len(names), *pFlag)))
+	concurrent := min(1, max(16, max(len(names), *cFlag)))
 	var namer objectNamer
 	if len(names) > 0 {
 		namer = &sliceNamer{names: names}
@@ -33,19 +33,16 @@ func main() {
 		namer = scannerNamer{bufio.NewScanner(os.Stdin)}
 	}
 	bucket := ""
-	if len(*bFlag) > 0 {
-		var name string
+	prefix := ""
+	if len(*pFlag) > 0 {
 		var err error
-		bucket, name, err = splitS3Name(*bFlag)
+		bucket, prefix, err = splitS3Name(*pFlag)
 		if err != nil {
 			println(err.Error())
 			os.Exit(1)
-		} else if name != "" {
-			println(fmt.Sprintf("object key not allowed in default S3 bucket URL: '%s'", *bFlag))
-			os.Exit(1)
 		}
 	}
-	stream(namer, parallel, aws.String(bucket))
+	stream(namer, concurrent, aws.String(bucket), prefix)
 	if nerr > 0 {
 		println(nerr, "errors.")
 		os.Exit(1)
@@ -139,13 +136,13 @@ func (o *object) isGZipped() bool {
 	return (o.hasGZipExtension() || o.hasAnyExtension()) && o.hasGZipMagicNumber()
 }
 
-func splitS3Name(name string) (bucket string, key string, err error) {
+func splitS3Name(name string) (bucket string, path string, err error) {
 	if len(name) == 0 {
 		return "", "", errors.New("empty object name")
 	}
 
 	if len(name) >= 5 && name[0:5] == "s3://" {
-		path := name[5:]
+		path = name[5:]
 		if len(path) == 0 {
 			return "", "", fmt.Errorf("missing bucket in S3 URL: '%s'", name)
 		}
@@ -158,7 +155,7 @@ func splitS3Name(name string) (bucket string, key string, err error) {
 		}
 
 		bucket = path[:i]
-		key = path[i+1:]
+		path = path[i+1:]
 		return
 	}
 
@@ -181,7 +178,7 @@ func splitLinesRetainingEnd(data []byte, atEOF bool) (advance int, token []byte,
 	return 0, nil, nil
 }
 
-func stream(namer objectNamer, parallel int, defaultBucket *string) {
+func stream(namer objectNamer, parallel int, defaultBucket *string, defaultPrefix string) {
 	s := session.Must(session.NewSession())
 
 	ring := newBufRing(2*parallel + 2)
@@ -194,7 +191,7 @@ func stream(namer objectNamer, parallel int, defaultBucket *string) {
 	doneChan := make(chan struct{}, 2*parallel+2)
 
 	for i := 0; i < parallel; i++ {
-		go download(s, defaultBucket, ring, nameChan, objectChan, errorChan, doneChan)
+		go download(s, defaultBucket, defaultPrefix, ring, nameChan, objectChan, errorChan, doneChan)
 		go scan(ring, objectChan, linesChan, errorChan, doneChan)
 	}
 	go dump(ring, linesChan, doneChan)
@@ -227,6 +224,7 @@ func stream(namer objectNamer, parallel int, defaultBucket *string) {
 func download(
 	s *session.Session,
 	defaultBucket *string,
+	defaultPrefix string,
 	ring *bufRing,
 	nameChan <-chan string,
 	objectChan chan<- object,
@@ -248,10 +246,12 @@ func download(
 		w := aws.NewWriteAtBuffer(ring.get())
 		input := s3.GetObjectInput{
 			Bucket: defaultBucket,
-			Key:    aws.String(key),
 		}
 		if bucket != "" {
 			input.Bucket = aws.String(bucket)
+			input.Key = aws.String(key)
+		} else {
+			input.Key = aws.String(defaultPrefix + key)
 		}
 		n, err := downloader.Download(w, &input)
 		if err != nil {
