@@ -2,9 +2,9 @@
 
 ---
 
-*Read large amounts of text files from Amazon S3 and dump their contents to
-standard output so you can use a pipeline of Unix/Linux filters (*e.g.* `sed`,
-`grep`, `gzip`, `jq`, AWS CLI, *etc.*) to process them.*
+*Read large amounts of text files from Amazon S3 line-by-line and dump their
+merged contents to standard output so you can use a pipeline of Unix/Linux
+filters (*e.g.* `sed`, `grep`, `gzip`, `jq`, AWS CLI, *etc.*) to process them.*
 
 ---
 
