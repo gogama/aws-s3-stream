@@ -1,4 +1,4 @@
-# s3stream - Merge lines from S3 objects into your standard output
+# s3stream - Merge lines from S3 objects to stdout
 
 ---
 
