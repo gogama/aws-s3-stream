@@ -317,8 +317,8 @@ func dump(ring *bufRing, linesChan <-chan []byte, doneChan chan<- struct{}) {
 		}
 		buf2 := buf
 		n, err := os.Stdout.Write(buf2)
-		for err == io.ErrShortWrite {
-			buf2 = buf[:n]
+		for n < len(buf2) && errors.Unwrap(err) == io.ErrShortWrite {
+			buf2 = buf2[n:]
 			n, err = os.Stdout.Write(buf2)
 		}
 		ring.put(buf)
