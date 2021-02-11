@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/aws/aws-sdk-go/service/s3"
 
@@ -185,33 +186,44 @@ func stream(namer objectNamer, parallel int, defaultBucket *string, defaultPrefi
 	defer ring.close()
 
 	nameChan := make(chan string, parallel)
+	defer close(nameChan)
 	objectChan := make(chan object, parallel)
+	defer close(objectChan)
 	linesChan := make(chan []byte, parallel)
+	defer close(linesChan)
 	errorChan := make(chan error, parallel)
-	doneChan := make(chan struct{}, 2*parallel+2)
+	defer close(errorChan)
 
+	wgDownload := new(sync.WaitGroup)
 	for i := 0; i < parallel; i++ {
-		go download(s, defaultBucket, defaultPrefix, ring, nameChan, objectChan, errorChan, doneChan)
-		go scan(ring, objectChan, linesChan, errorChan, doneChan)
+		wgDownload.Add(1)
+		go download(s, defaultBucket, defaultPrefix, ring, nameChan, objectChan, errorChan, wgDownload)
 	}
-	go dump(ring, linesChan, doneChan)
-	go feedback(errorChan, doneChan)
+
+	wgScan := new(sync.WaitGroup)
+	for i := 0; i < parallel; i++ {
+		wgScan.Add(1)
+		go scan(ring, objectChan, linesChan, errorChan, wgScan)
+	}
+
+	wgOutput := new(sync.WaitGroup)
+	wgOutput.Add(1)
+	go dump(ring, linesChan, wgOutput)
+	wgOutput.Add(1)
+	go feedback(errorChan, wgOutput)
 
 	defer func() {
 		for i := 0; i < parallel; i++ {
 			nameChan <- ""
+		}
+		wgDownload.Wait()
+		for i := 0; i < parallel; i++ {
 			objectChan <- object{}
 		}
+		wgScan.Wait()
 		linesChan <- nil
 		errorChan <- nil
-		for i := 0; i < 2*parallel+2; i++ {
-			<-doneChan
-		}
-		close(doneChan)
-		close(errorChan)
-		close(linesChan)
-		close(objectChan)
-		close(nameChan)
+		wgOutput.Wait()
 	}()
 
 	for name, ok := namer.Name(); ok; name, ok = namer.Name() {
@@ -229,9 +241,9 @@ func download(
 	nameChan <-chan string,
 	objectChan chan<- object,
 	errorChan chan<- error,
-	doneChan chan<- struct{},
+	wg *sync.WaitGroup,
 ) {
-	defer func() { doneChan <- struct{}{} }()
+	defer func() { wg.Done() }()
 	downloader := s3manager.NewDownloader(s)
 	for name := <-nameChan; name != ""; name = <-nameChan {
 		bucket, key, err := splitS3Name(name)
@@ -263,8 +275,8 @@ func download(
 	}
 }
 
-func scan(ring *bufRing, objectChan <-chan object, linesChan chan<- []byte, errorChan chan<- error, doneChan chan<- struct{}) {
-	defer func() { doneChan <- struct{}{} }()
+func scan(ring *bufRing, objectChan <-chan object, linesChan chan<- []byte, errorChan chan<- error, wg *sync.WaitGroup) {
+	defer func() { wg.Done() }()
 	for obj := <-objectChan; obj.name != ""; obj = <-objectChan {
 		scanOne(obj, ring, linesChan, errorChan)
 	}
@@ -309,8 +321,8 @@ func scanOne(obj object, ring *bufRing, linesChan chan<- []byte, errorChan chan<
 	}
 }
 
-func dump(ring *bufRing, linesChan <-chan []byte, doneChan chan<- struct{}) {
-	defer func() { doneChan <- struct{}{} }()
+func dump(ring *bufRing, linesChan <-chan []byte, wg *sync.WaitGroup) {
+	defer func() { wg.Done() }()
 	for buf := <-linesChan; buf != nil; buf = <-linesChan {
 		if len(buf) == 0 || buf[len(buf)-1] != '\n' {
 			buf = append(buf, '\n')
@@ -325,8 +337,8 @@ func dump(ring *bufRing, linesChan <-chan []byte, doneChan chan<- struct{}) {
 	}
 }
 
-func feedback(errorChan <-chan error, doneChan chan<- struct{}) {
-	defer func() { doneChan <- struct{}{} }()
+func feedback(errorChan <-chan error, wg *sync.WaitGroup) {
+	defer func() { wg.Done() }()
 	for err := <-errorChan; err != nil; err = <-errorChan {
 		println(err.Error())
 		nerr++
