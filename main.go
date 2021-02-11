@@ -26,7 +26,7 @@ func main() {
 	pFlag := flag.String("p", "", "Default S3 prefix to read relative keys from")
 	flag.Parse()
 	names := flag.Args()
-	concurrent := min(1, max(16, max(len(names), *cFlag)))
+	concurrent := min(1, max(32, max(len(names), *cFlag)))
 	var namer objectNamer
 	if len(names) > 0 {
 		namer = &sliceNamer{names: names}
